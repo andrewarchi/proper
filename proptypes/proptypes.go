@@ -43,7 +43,7 @@ const (
 	// Any is a prop of any type.
 	Any simple = "any"
 
-	// Specific JS primitive types.
+	// Specific JavaScript primitive types.
 	Array  simple = "array"
 	Bool   simple = "bool"
 	Func   simple = "func"
@@ -71,10 +71,10 @@ func InstanceOf(class string) PropType { return &instanceOf{class} }
 // OneOf is a a prop that is limited to specific values by treating it as an
 // enum. The given literals must be formatted in JavaScript syntax, including
 // quotes for strings (i.e. "'lorem'" for the JavaScript string value 'lorem').
-func OneOf(literals []string) PropType { return &oneOf{literals} }
+func OneOf(literals ...string) PropType { return &oneOf{literals} }
 
 // OneOfType is an object that could be one of many types.
-func OneOfType(types []PropType) PropType { return &oneOfType{types} }
+func OneOfType(types ...PropType) PropType { return &oneOfType{types} }
 
 // ArrayOf is an array of a certain type.
 func ArrayOf(typ PropType) PropType { return &arrayOf{typ} }
