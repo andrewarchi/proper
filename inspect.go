@@ -13,6 +13,22 @@ import (
 	"github.com/andrewarchi/proper/proptypes"
 )
 
+// PropTypeDecl is a declaration of a prop type in JavaScript.
+type PropTypeDecl struct {
+	name *ast.Ident
+	pos  token.Pos
+	typ  proptypes.PropType
+}
+
+// Format formats a prop type declaration as a JavaScript const declaration.
+func (d *PropTypeDecl) Format(fset *token.FileSet) string {
+	t := "null"
+	if d.typ != nil {
+		t = d.typ.Format(0)
+	}
+	return fmt.Sprintf("// %v\nconst %s = %s;", fset.Position(d.pos), d.name, t)
+}
+
 type testPropType struct{ val interface{} }
 
 func (t testPropType) Format(indent int) string {
@@ -31,29 +47,16 @@ func (t testPropType) Format(indent int) string {
 
 var _ proptypes.PropType = testPropType{nil}
 
-func InspectDirRecursive(fset *token.FileSet, root string) (map[string][]proptypes.PropType, error) {
-	types := make(map[string][]proptypes.PropType)
-	err := filepath.Walk(root, func(path string, f os.FileInfo, err error) error {
+func InspectDirRecursive(root string, fset *token.FileSet, types map[string][]*PropTypeDecl) error {
+	return filepath.Walk(root, func(path string, f os.FileInfo, err error) error {
 		if f.IsDir() {
-			return inspectDir(fset, path, types)
+			return InspectDir(path, fset, types)
 		}
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	return types, nil
 }
 
-func InspectDir(fset *token.FileSet, dir string) (map[string][]proptypes.PropType, error) {
-	types := make(map[string][]proptypes.PropType)
-	if err := inspectDir(fset, dir, types); err != nil {
-		return nil, err
-	}
-	return types, nil
-}
-
-func inspectDir(fset *token.FileSet, dir string, types map[string][]proptypes.PropType) error {
+func InspectDir(dir string, fset *token.FileSet, types map[string][]*PropTypeDecl) error {
 	pkgs, err := parser.ParseDir(fset, dir, func(info os.FileInfo) bool {
 		return !strings.HasSuffix(info.Name(), "_test.go")
 	}, 0)
@@ -68,27 +71,19 @@ func inspectDir(fset *token.FileSet, dir string, types map[string][]proptypes.Pr
 	return nil
 }
 
-func inspectFile(fset *token.FileSet, f *ast.File) []proptypes.PropType {
-	var propTypes []proptypes.PropType
+func inspectFile(fset *token.FileSet, f *ast.File) []*PropTypeDecl {
+	var propDecls []*PropTypeDecl
 	for _, decl := range f.Decls {
 		if typeDecl, ok := decl.(*ast.GenDecl); ok && typeDecl.Tok == token.TYPE {
-			fmt.Println(fset.Position(typeDecl.Pos()))
 			for _, s := range typeDecl.Specs {
 				if spec, ok := s.(*ast.TypeSpec); ok {
-					fmt.Printf("const %s = ", spec.Name)
-					if propType, ok := inspectExpr(spec.Type); ok {
-						fmt.Print(propType.Format(0))
-						propTypes = append(propTypes, propType)
-					} else {
-						fmt.Print("null")
-					}
-					fmt.Println(";")
+					propType, _ := inspectExpr(spec.Type)
+					propDecls = append(propDecls, &PropTypeDecl{spec.Name, typeDecl.Pos(), propType})
 				}
 			}
-			fmt.Println()
 		}
 	}
-	return propTypes
+	return propDecls
 }
 
 func inspectExpr(expr ast.Expr) (proptypes.PropType, bool) {
@@ -168,7 +163,7 @@ func inspectStruct(typ *ast.StructType) (proptypes.PropType, bool) {
 				continue
 			}
 			for _, name := range field.Names {
-				if !name.IsExported() { // undetectable in json marshal
+				if !name.IsExported() { // Undetectable by json encoder
 					continue
 				}
 				fieldName := name.Name
@@ -181,9 +176,10 @@ func inspectStruct(typ *ast.StructType) (proptypes.PropType, bool) {
 					if tagName != "" {
 						fieldName = tagName
 					}
+					// TODO(aa) add PropType support for omitempty
 					omitEmpty = options.Contains("omitempty")
+					_ = omitEmpty
 				}
-				_ = omitEmpty
 				shape = append(shape, proptypes.ShapeEntry{Name: fieldName, Type: propType})
 			}
 		}
