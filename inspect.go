@@ -5,81 +5,83 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"reflect"
 	"strings"
+
+	"github.com/andrewarchi/proper/proptypes"
 )
 
-func InspectDir(fset *token.FileSet, dir string) {
-	pkgs, err := parser.ParseDir(fset, dir, nil, parser.AllErrors) // 0
+func InspectDir(fset *token.FileSet, dir string) (map[string][]proptypes.PropType, error) {
+	pkgs, err := parser.ParseDir(fset, dir, func(info os.FileInfo) bool {
+		return !strings.HasSuffix(info.Name(), "_test.go")
+	}, 0)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
+	types := make(map[string][]proptypes.PropType)
 	for _, pkg := range pkgs {
 		for name, f := range pkg.Files {
-			if !strings.HasSuffix(name, "_test.go") {
-				inspectFile(fset, f)
-			}
+			types[name] = inspectFile(fset, f)
 		}
 	}
+	return types, nil
 }
 
-func inspectFile(fset *token.FileSet, f *ast.File) {
+func inspectFile(fset *token.FileSet, f *ast.File) []proptypes.PropType {
+	var propTypes []proptypes.PropType
 	for _, decl := range f.Decls {
 		if typeDecl, ok := decl.(*ast.GenDecl); ok && typeDecl.Tok == token.TYPE {
 			fmt.Println(fset.Position(typeDecl.Pos()))
 			for _, s := range typeDecl.Specs {
 				if spec, ok := s.(*ast.TypeSpec); ok {
 					fmt.Println("#", spec.Name)
-					var jsTyp string
-					switch typ := spec.Type.(type) {
-					case *ast.Ident:
-						fmt.Println("Ident")
-					case *ast.ParenExpr:
-						fmt.Println("ParenExpr")
-					case *ast.SelectorExpr:
-						fmt.Println("SelectorExpr")
-					case *ast.StarExpr:
-						fmt.Println("StarExpr")
-					case *ast.ArrayType:
-						jsTyp = "PropTypes.array"
-					case *ast.ChanType:
-						// unsupported
-					case *ast.FuncType:
-						jsTyp = "PropTypes.func"
-					case *ast.InterfaceType:
-						jsTyp = "PropTypes.object"
-					case *ast.MapType:
-						fmt.Println("MapType")
-					case *ast.StructType:
-						inspectStruct(typ)
-					default:
-						fmt.Println("Other:", reflect.TypeOf(spec.Type).Elem().Name())
-					}
-					if jsTyp != "" {
-						fmt.Println(jsTyp)
+					propType := inspectExpr(spec.Type)
+					if propType != nil {
+						fmt.Println("PROPTYPE: ", propType.Format(0))
+						propTypes = append(propTypes, propType)
+					} else {
+						fmt.Println("PROPTYPE: nil")
 					}
 				}
 			}
 			fmt.Println()
 		}
 	}
+	return propTypes
 }
 
-func inspectStruct(typ *ast.StructType) {
+func inspectExpr(expr ast.Expr) proptypes.PropType {
+	fmt.Println(reflect.TypeOf(expr).Elem().Name())
+	switch typ := expr.(type) {
+	case *ast.Ident:
+	case *ast.ParenExpr:
+	case *ast.SelectorExpr:
+	case *ast.StarExpr:
+		return inspectExpr(typ.X)
+	case *ast.ArrayType:
+		return proptypes.ArrayOf(inspectExpr(typ.Elt))
+	case *ast.MapType:
+		return inspectMap(typ)
+	case *ast.StructType:
+		return inspectStruct(typ)
+	case *ast.ChanType, *ast.FuncType, *ast.InterfaceType:
+		return nil // cannot be marshalled to json
+	default:
+		fmt.Println("Other")
+	}
+	return nil
+}
+
+func inspectMap(m *ast.MapType) proptypes.PropType {
+	return proptypes.Shape(nil) // only if key is string
+}
+
+func inspectStruct(typ *ast.StructType) proptypes.PropType {
+	var shape proptypes.ShapeMap
 	if typ.Fields != nil {
 		for _, field := range typ.Fields.List {
-			indirect := false
-			switch typ := field.Type.(type) {
-			case *ast.Ident:
-				fmt.Println("Ident", typ.Name, typ.Obj)
-			case *ast.SelectorExpr:
-				fmt.Println("SelectorExpr", typ.X, typ.Sel)
-			case *ast.StarExpr:
-				indirect = true
-				fmt.Println("StarExpr", typ.X)
-			default: // not a conclusive list yet
-				fmt.Println("Unknown:", reflect.TypeOf(field.Type).Elem().Name())
-			}
+			propType := inspectExpr(field.Type)
 			for _, name := range field.Names {
 				fmt.Print(field)
 				if !name.IsExported() { // undetectable in json marshall
@@ -87,8 +89,8 @@ func inspectStruct(typ *ast.StructType) {
 				}
 				fieldName := name.Name
 				omitEmpty := false
-				if tag, ok := lookupTag(field); ok {
-					tagName, options := parseTag(tag)
+				if tag, ok := lookupTag(field, "json"); ok {
+					tagName, options := parseJSONTag(tag)
 					if tagName == "-" {
 						continue
 					}
@@ -97,8 +99,10 @@ func inspectStruct(typ *ast.StructType) {
 					}
 					omitEmpty = options.Contains("omitempty")
 				}
-				fmt.Println(fieldName, omitEmpty, indirect)
+				shape = append(shape, proptypes.ShapeEntry{Name: fieldName, Type: propType})
+				fmt.Println(fieldName, omitEmpty)
 			}
 		}
 	}
+	return proptypes.Shape(shape)
 }

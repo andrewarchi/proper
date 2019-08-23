@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-func lookupTag(field *ast.Field) (string, bool) {
+func lookupTag(field *ast.Field, key string) (string, bool) {
 	if field == nil || field.Tag == nil {
 		return "", false
 	}
@@ -15,18 +15,18 @@ func lookupTag(field *ast.Field) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	return reflect.StructTag(tag).Lookup("json")
+	return reflect.StructTag(tag).Lookup(key)
 }
 
 // tagOptions is the string following a comma in a struct field's "json"
 // tag, or the empty string. It does not include the leading comma.
-// Copied from: encoding/json/tags.go.
+// Copied from: encoding/json.tagOptions.
 type tagOptions string
 
-// parseTag splits a struct field's json tag into its name and
+// parseJSONTag splits a struct field's json tag into its name and
 // comma-separated options.
-// Copied from: encoding/json/tags.go.
-func parseTag(tag string) (string, tagOptions) {
+// Copied from: encoding/json.parseTag.
+func parseJSONTag(tag string) (string, tagOptions) {
 	if idx := strings.Index(tag, ","); idx != -1 {
 		return tag[:idx], tagOptions(tag[idx+1:])
 	}
@@ -36,7 +36,7 @@ func parseTag(tag string) (string, tagOptions) {
 // Contains reports whether a comma-separated list of options
 // contains a particular substr flag. substr must be surrounded by a
 // string boundary or commas.
-// Copied from: encoding/json/tags.go.
+// Copied from: encoding/json.tagOptions.Contains.
 func (o tagOptions) Contains(optionName string) bool {
 	if len(o) == 0 {
 		return false
